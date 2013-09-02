@@ -12,13 +12,20 @@ sampleLikelihoodMolecularPop=function(pEst,pObs,N) {
 }
 
 ## Second, i will setup the data.
-hzar.doMolecularData1DPops<-function(distance,pObs,nSamples){
+hzar.doMolecularData1DPops<-function(distance,pObs,nEff,
+                                     siteID=paste("P",1:length(distance),sep=""),
+                                     ylim=extendrange(c(0,1))){
   if((length(distance) != length(pObs))     ||
-     (length(distance) != length(nSamples)) ||
-     (length(pObs) != length(nSamples))  ){
-    stop("Distance, pObs and nSamples are not of the same length.");
+     (length(distance) != length(nEff)) ||
+     (length(pObs) != length(nEff))  ){
+    stop("Distance, pObs and nEff are not of the same length.");
   }
-  obj<-list(frame=data.frame(dist=distance,obsFreq=pObs,n=nSamples));
+  obj<-list(frame=na.omit(data.frame(
+              dist=distance,
+              obsFreq=pObs,
+              n=nEff,
+              row.names=siteID)));
+  obj$ylim <- ylim;
   obj$model.LL <- function(model.func){
     pEst=model.func(obj$frame$dist);
 ##res<-numeric(length(pEst));
@@ -58,6 +65,11 @@ CLINEPARAMETERS<-list(center=mkParam("center",10,1.5,-1e8,1e8),
                       pMax  =mkParam("pMax",  1, 1.1,   0,  1,isRB01=TRUE),
                       xMin  =mkParam("xMin",0,1.5,-1e8,1e8),
                       xMax  =mkParam("xMax",10,1.5,-1e8,1e8),
+                      muL=mkParam("muL",1,1.5,  -1e8, 1e8),
+                      muR=mkParam("muR",1,1.5,  -1e8, 1e8),
+                      varL=mkParam("varL",1,1.5,  1e-8, 1e8),
+                      varR=mkParam("varR",1,1.5,  1e-8, 1e8),
+                      varH=mkParam("varH",1,1.5,  1e-8, 1e8),
                       deltaL=mkParam("deltaL",1,1.5,  1e-8, 1e8),
                       deltaR=mkParam("deltaR",1,1.5,  1e-8, 1e8),
                       deltaM=mkParam("deltaM",1,1.5,  1e-8, 1e8),
@@ -65,6 +77,32 @@ CLINEPARAMETERS<-list(center=mkParam("center",10,1.5,-1e8,1e8),
                       tauR  =mkParam("tauR", 0.5,1.1,  0,   1,isRB01=TRUE),
                       tauM  =mkParam("tauM", 0.5,1.1,  0,   1,isRB01=TRUE));
 
+## Internal getter and setter methods for parameters 
+
+param.check <- function(x){
+  if(!inherits(x,"clineParameter"))
+    stop("Argument x is not a clineParameter")
+}
+param.init <- function(x){ param.check(x); x$val }
+"param.init<-" <- function(x,value){ param.check(x); x$val<-value; x }
+param.tune <- function(x){ param.check(x); x$w }
+"param.tune<-" <- function(x,value){ param.check(x); x$w<-value; x }
+param.fix <- function(x){ param.check(x); attr(x,"fixed") }
+"param.fix<-" <- function(x,value){ param.check(x);  attr(x,"fixed")<-as.logical(value); x }
+param.upper <- function(x){ param.check(x); attr(x,"limit.upper") }
+"param.upper<-" <- function(x,value){ param.check(x);  attr(x,"limit.upper")<-value; x }
+param.lower <- function(x){ param.check(x); attr(x,"limit.lower") }
+"param.lower<-" <- function(x,value){ param.check(x);  attr(x,"limit.lower")<-value; x }
+param.name <- function(x){ param.check(x); attr(x,"param") }
+print.clineParameter <- function(x,...){
+  print(data.frame(param=param.name(x),
+                   init=param.init(x),
+                   tune=param.tune(x),
+                   fixed=param.fix(x),
+                   lower=param.lower(x),
+                   upper=param.upper(x)));
+  invisible(x);
+}
 
 ## suggest upper and lower bounds for cov matrix based on observed data:
 ## have vector of distances (obsData$frame$dist),
@@ -108,243 +146,424 @@ cline.suggestionFunc1D <-
 ## objCMeta$func<-function(center,width);
 ## class(objCMeta)<-"clineMetaModel";
 
+## Internal dispatch methods for handling parameters
+
+
+meta.check <- function(x){
+  if(!inherits(x,"clineMetaModel"))
+    stop("Argument x is not a clineMetaModel")
+}
+
+meta.param.names <- function(x) names(x$parameterTypes)
+meta.check.names <- function(x,cVec) {
+  meta.param.names(x)-> pNames;
+  if(length(pNames)!=length(cVec)
+     || !all(pNames %in% cVec)
+     || !all(cVec %in% pNames) )
+    stop(paste("Invalid Assignment of names:", paste(cVec,collapse=", "),"\n"))
+  return(TRUE)
+}
+
+meta.fixValue <- function(x,value,tC=is.numeric){
+  if(tC(value)&&length(value)==1){
+    value<-as.list(rep(value,length(x$parameterTypes)))
+    names(value) <- meta.param.names(x);
+  }else{
+    if(!is.list(value)) value <- as.list(value)
+    meta.check.names(x,names(value))
+  }
+  value
+}
+meta.param.m <- function(x,pF){
+  res <- lapply(x$parameterTypes,pF);
+  names(res)<-meta.param.names(x);
+  res
+}
+
+ 
+
+meta.init <- function(x) meta.param.m(x,param.init)
+"meta.init<-" <- function(x,value) {
+  value <- meta.fixValue(x,value)
+  for(iter in meta.param.names(x))
+    param.init(x$parameterTypes[[iter]]) <- value[[iter]];
+  x
+} 
+
+meta.tune <- function(x) meta.param.m(x,param.tune)
+"meta.tune<-" <- function(x,value) {
+  value <- meta.fixValue(x,value)
+  for(iter in meta.param.names(x))
+    param.tune(x$parameterTypes[[iter]]) <- value[[iter]];
+  x
+} 
+
+meta.fix <- function(x) meta.param.m(x,param.fix)
+"meta.fix<-" <- function(x,value) { 
+  value <- meta.fixValue(x,value,is.logical)
+  for(iter in meta.param.names(x))
+    param.fix(x$parameterTypes[[iter]]) <- value[[iter]];
+  x
+} 
+
+meta.lower <- function(x) meta.param.m(x,param.lower)
+"meta.lower<-" <- function(x,value) { 
+  value <- meta.fixValue(x,value)
+  for(iter in meta.param.names(x))
+    param.lower(x$parameterTypes[[iter]]) <- value[[iter]];
+  x
+} 
+
+meta.upper <- function(x) meta.param.m(x,param.upper)
+"meta.upper<-" <- function(x,value) {
+  value <- meta.fixValue(x,value)
+  for(iter in meta.param.names(x))
+    param.upper(x$parameterTypes[[iter]]) <- value[[iter]];
+  x
+} 
+
+
+
+hzar.meta.init <- function(x) meta.param.m(x,param.init)
+"hzar.meta.init<-" <- function(x,value) {
+  value <- meta.fixValue(x,value)
+  for(iter in meta.param.names(x))
+    param.init(x$parameterTypes[[iter]]) <- value[[iter]];
+  x
+} 
+
+hzar.meta.tune <- function(x) meta.param.m(x,param.tune)
+"hzar.meta.tune<-" <- function(x,value) {
+  value <- meta.fixValue(x,value)
+  for(iter in meta.param.names(x))
+    param.tune(x$parameterTypes[[iter]]) <- value[[iter]];
+  x
+} 
+
+hzar.meta.fix <- function(x) meta.param.m(x,param.fix)
+"hzar.meta.fix<-" <- function(x,value) { 
+  value <- meta.fixValue(x,value,is.logical)
+  for(iter in meta.param.names(x))
+    param.fix(x$parameterTypes[[iter]]) <- value[[iter]];
+  x
+} 
+
+hzar.meta.lower <- function(x) meta.param.m(x,param.lower)
+"hzar.meta.lower<-" <- function(x,value) { 
+  value <- meta.fixValue(x,value)
+  for(iter in meta.param.names(x))
+    param.lower(x$parameterTypes[[iter]]) <- value[[iter]];
+  x
+} 
+
+hzar.meta.upper <- function(x) meta.param.m(x,param.upper)
+"hzar.meta.upper<-" <- function(x,value) {
+  value <- meta.fixValue(x,value)
+  for(iter in meta.param.names(x))
+    param.upper(x$parameterTypes[[iter]]) <- value[[iter]];
+  x
+} 
+
+
+print.clineMetaModel <- function(x,...){
+  for(iter in names(x)){
+    if(iter!="parameterTypes"){
+      cat(paste(iter,":\n",sep=""));
+      print(x[[iter]],...)
+    }
+  }
+  cat("Cline Parameters:\n")
+  print(data.frame(row.names=meta.param.names(x),
+                   init=as.numeric(meta.init(x)),
+                   tune=as.numeric(meta.tune(x)),
+                   fixed=as.logical(meta.fix(x)),
+                   lower=as.numeric(meta.lower(x)),
+                   upper=as.numeric(meta.upper(x))),...);
+  invisible(x);
+}
+
+
+
+cline.func.gen <- function(model){
+  f <- model$req
+  pExp <- model$pExp
+  bF <- bquote(return(function(x) .(pExp)))
+  body(f) <- bF
+##  attr(f,"source") <- deparse(bF)
+  environment(f) <- .GlobalEnv
+  model$func <- f
+  model
+}
+cline.u.ascend <- quote((x - center) * 4/width)
+cline.du.ascend <- quote(x - center)
+cline.u.descend <- quote((x - center) * -4/width)
+cline.du.descend <- quote(center-x)
 cline.meta.simple.scaled.ascending =
+  cline.func.gen(
   list(
        prior=function(center,width,pMin,pMax){
   return(0); },
-      func=function(center,width,pMin,pMax){
-         pCline<- function(x) {
-           u <- (x - center) * 4/width
-           return(pMin+(pMax-pMin)* (1/(1+ exp(-u)))) }
+       pExp=cline.exp.scale(cline.exp.sigmoid(quote((x - center) * 4/width))),
+       
+      ## func=function(center,width,pMin,pMax){
+##          pCline<- function(x) {
+##            u <- (x - center) * 4/width
+##            return(pMin+(pMax-pMin)* (1/(1+ exp(-u)))) }
          
-         return(pCline)
-       },
-       req=function(center,width,pMin,pMax){
-         return(pMin>=0 & pMax<=1 & pMin<pMax & width>0)},
+##          return(pCline)
+##        },
+       req=function(center,width,pMin,pMax)
+         return(pMin>=0 & pMax<=1 & pMin<pMax & width>0),
        parameterTypes=CLINEPARAMETERS[c("center","width","pMin","pMax")]
-       );
+       ));
 cline.meta.simple.scaled.descending =
-  list(
+  cline.func.gen(list(
        prior=function(center,width,pMin,pMax){
   return(0); },
-      func=function(center,width,pMin,pMax){
-         pCline<- function(x) {
-           u <- (x - center) * -4/width
-           return(pMin+(pMax-pMin)* (1/(1+ exp(-u)))) }
+      pExp=cline.exp.scale(cline.exp.sigmoid(quote((x - center) * -4/width))),
+       ## func=function(center,width,pMin,pMax){
+##          pCline<- function(x) {
+##            u <- (x - center) * -4/width
+##            return(pMin+(pMax-pMin)* (1/(1+ exp(-u)))) }
          
-         return(pCline)
-       },
-       req=function(center,width,pMin,pMax){
-         return(pMin>=0 & pMax<=1 & pMin<pMax & width>0)},
+##          return(pCline)
+##        },
+       req=function(center,width,pMin,pMax)
+         return(pMin>=0 & pMax<=1 & pMin<pMax & width>0),
        parameterTypes=CLINEPARAMETERS[c("center","width","pMin","pMax")]
-       );
+       ));
 class(cline.meta.simple.scaled.ascending)<-"clineMetaModel";
 class(cline.meta.simple.scaled.descending)<-"clineMetaModel";
 cline.meta.tailed.scaled.ascending =
-  list(req= function(center,width,pMin,pMax,deltaL,tauL,deltaR,tauR)
-       {
+  cline.func.gen(list(req= function(center,width,pMin,pMax,deltaL,tauL,deltaR,tauR)
+       
          return(width>0 & deltaL>=0 & deltaR>=0 &
                (pMax-pMin)* (deltaL+deltaR)<=width*50 &
                 pMin>=0 & pMax<=1 & pMin<pMax & 
                 tauL>=0 & tauL<=1 &
-                tauR>=0 & tauR<=1 )
-       },
+                tauR>=0 & tauR<=1 ),
        prior=function(center,width,pMin,pMax,deltaL,tauL,deltaR,tauR){
          return(0);
          ## return(-2*log(width/2)-2*(deltaL+deltaR)/width);
        },
-      func=function(center,width,pMin,pMax,deltaL,tauL,deltaR,tauR)
-       {
-         gamma=4/width;
-         tail.LO=meta.tail.lower(gamma=gamma,d1=deltaL,tau1=tauL);
-         tail.HI=meta.tail.upper(gamma=gamma,d2=deltaR,tau2=tauR);
-         clineComposite=
-           meta.cline.func.stepBoth(center=center,
-                                    direction=1,
-                                    gamma=gamma,
-                                    lowerTail=tail.LO,
-                                    upperTail=tail.HI);
-         return(meta.cline.func.pScale(pMin,pMax,clineComposite));
-       },
+       pExp=cline.exp.scale(cline.exp.stepBoth(
+         cline.u.ascend,cline.du.ascend,
+         quote(deltaL),
+         quote(deltaR),
+         cline.exp.lower(cline.u.ascend,quote(deltaL),quote(tauL)),
+         cline.exp.upper(cline.u.ascend,quote(deltaR),quote(tauR)))),
+      ## func=function(center,width,pMin,pMax,deltaL,tauL,deltaR,tauR)
+##        {
+##          gamma=4/width;
+##          tail.LO=meta.tail.lower(gamma=gamma,d1=deltaL,tau1=tauL);
+##          tail.HI=meta.tail.upper(gamma=gamma,d2=deltaR,tau2=tauR);
+##          clineComposite=
+##            meta.cline.func.stepBoth(center=center,
+##                                     direction=1,
+##                                     gamma=gamma,
+##                                     lowerTail=tail.LO,
+##                                     upperTail=tail.HI);
+##          return(meta.cline.func.pScale(pMin,pMax,clineComposite));
+##        },
        parameterTypes=CLINEPARAMETERS[c("center","width","pMin","pMax","deltaL","tauL","deltaR","tauR")]
-       );
+       ));
 cline.meta.tailed.scaled.descending =
-  list(req= function(center,width,pMin,pMax,deltaL,tauL,deltaR,tauR)
-       {
+  cline.func.gen(list(req= function(center,width,pMin,pMax,deltaL,tauL,deltaR,tauR)
          return(width>0 & deltaL>=0 & deltaR>=0 &
                 (pMax-pMin)*(deltaL+deltaR)<=width*50 &
                 pMin>=0 & pMax<=1 & pMin<pMax & 
                 tauL>=0 & tauL<=1 &
-                tauR>=0 & tauR<=1 )
-       },
+                tauR>=0 & tauR<=1 ),
        prior=function(center,width,pMin,pMax,deltaL,tauL,deltaR,tauR){
          return(0);
          ## return(-2*log(width/2)-2*(deltaL+deltaR)/width);
        },
-      func=function(center,width,pMin,pMax,deltaL,tauL,deltaR,tauR)
-       {
-         gamma=4/width;
-         tail.LO=meta.tail.lower(gamma=gamma,d1=deltaR,tau1=tauR);
-         tail.HI=meta.tail.upper(gamma=gamma,d2=deltaL,tau2=tauL);
-         clineComposite=
-           meta.cline.func.stepBoth(center=center,
-                                    direction=-1,
-                                    gamma=gamma,
-                                    lowerTail=tail.LO,
-                                    upperTail=tail.HI);
-         return(meta.cline.func.pScale(pMin,pMax,clineComposite));
-       },
+       pExp=cline.exp.scale(cline.exp.stepBoth(
+         cline.u.descend,cline.du.descend,
+         quote(deltaR),
+         quote(deltaL),
+         cline.exp.lower(cline.u.descend,quote(deltaR),quote(tauR)),
+         cline.exp.upper(cline.u.descend,quote(deltaL),quote(tauL)))),
+      ## func=function(center,width,pMin,pMax,deltaL,tauL,deltaR,tauR)
+##        {
+##          gamma=4/width;
+##          tail.LO=meta.tail.lower(gamma=gamma,d1=deltaR,tau1=tauR);
+##          tail.HI=meta.tail.upper(gamma=gamma,d2=deltaL,tau2=tauL);
+##          clineComposite=
+##            meta.cline.func.stepBoth(center=center,
+##                                     direction=-1,
+##                                     gamma=gamma,
+##                                     lowerTail=tail.LO,
+##                                     upperTail=tail.HI);
+##          return(meta.cline.func.pScale(pMin,pMax,clineComposite));
+##        },
        parameterTypes=CLINEPARAMETERS[c("center","width","pMin","pMax","deltaL","tauL","deltaR","tauR")]
-       );
+       ));
 class(cline.meta.tailed.scaled.ascending)<-"clineMetaModel";
 class(cline.meta.tailed.scaled.descending)<-"clineMetaModel";
 
 cline.meta.mtail.scaled.descending =
-  list(req= function(center,width,pMin,pMax,deltaM,tauM)
-       {
+  cline.func.gen(list(req= function(center,width,pMin,pMax,deltaM,tauM)
          return(width>0 & deltaM>=0 &
                 pMin>=0 & pMax<=1 & pMin<pMax & 
-                tauM>=0 & tauM<=1 )
-       },
+                tauM>=0 & tauM<=1 ),
        prior=function(center,width,pMin,pMax,deltaM,tauM){
   return(0); },
-      func=function(center,width,pMin,pMax,deltaM,tauM)
-       {
-         gamma=4/width;
-         tail.LO=meta.tail.lower(gamma=gamma,d1=deltaM,tau1=tauM);
-         tail.HI=meta.tail.upper(gamma=gamma,d2=deltaM,tau2=tauM);
-         clineComposite=
-           meta.cline.func.stepBoth(center=center,
-                                    direction=-1,
-                                    gamma=gamma,
-                                   lowerTail=tail.LO,
-                                    upperTail=tail.HI);
-         return(meta.cline.func.pScale(pMin,pMax,clineComposite));
-       },
+       pExp=cline.exp.scale(cline.exp.stepBoth(
+         cline.u.descend,cline.du.descend,
+         quote(deltaM),
+         quote(deltaM),
+         cline.exp.lower(cline.u.descend,quote(deltaM),quote(tauM)),
+         cline.exp.upper(cline.u.descend,quote(deltaM),quote(tauM)))),
+      ## func=function(center,width,pMin,pMax,deltaM,tauM)
+##        {
+##          gamma=4/width;
+##          tail.LO=meta.tail.lower(gamma=gamma,d1=deltaM,tau1=tauM);
+##          tail.HI=meta.tail.upper(gamma=gamma,d2=deltaM,tau2=tauM);
+##          clineComposite=
+##            meta.cline.func.stepBoth(center=center,
+##                                     direction=-1,
+##                                     gamma=gamma,
+##                                    lowerTail=tail.LO,
+##                                     upperTail=tail.HI);
+##          return(meta.cline.func.pScale(pMin,pMax,clineComposite));
+##        },
        parameterTypes=CLINEPARAMETERS[c("center","width","pMin","pMax","deltaM","tauM")]
-       );
+       ));
 cline.meta.mtail.scaled.ascending =
-  list(req= function(center,width,pMin,pMax,deltaM,tauM)
-       {
+  cline.func.gen(list(req= function(center,width,pMin,pMax,deltaM,tauM)
          return(width>0 & deltaM>=0 &
                 pMin>=0 & pMax<=1 & pMin<pMax & 
-                tauM>=0 & tauM<=1 )
-       },
+                tauM>=0 & tauM<=1 ),
        prior=function(center,width,pMin,pMax,deltaM,tauM){
   return(0); },
-      func=function(center,width,pMin,pMax,deltaM,tauM)
-       {
-         gamma=4/width;
-         tail.LO=meta.tail.lower(gamma=gamma,d1=deltaM,tau1=tauM);
-        tail.HI=meta.tail.upper(gamma=gamma,d2=deltaM,tau2=tauM);
-         clineComposite=
-           meta.cline.func.stepBoth(center=center,
-                                    direction=1,
-                                    gamma=gamma,
-                                    lowerTail=tail.LO,
-                                    upperTail=tail.HI);
-         return(meta.cline.func.pScale(pMin,pMax,clineComposite));
-       },
+       pExp=cline.exp.scale(cline.exp.stepBoth(
+         cline.u.ascend,cline.du.ascend,
+         quote(deltaM),
+         quote(deltaM),
+         cline.exp.lower(cline.u.ascend,quote(deltaM),quote(tauM)),
+         cline.exp.upper(cline.u.ascend,quote(deltaM),quote(tauM)))),
+##       func=function(center,width,pMin,pMax,deltaM,tauM)
+##        {
+##          gamma=4/width;
+##          tail.LO=meta.tail.lower(gamma=gamma,d1=deltaM,tau1=tauM);
+##         tail.HI=meta.tail.upper(gamma=gamma,d2=deltaM,tau2=tauM);
+##          clineComposite=
+##            meta.cline.func.stepBoth(center=center,
+##                                     direction=1,
+##                                     gamma=gamma,
+##                                     lowerTail=tail.LO,
+##                                     upperTail=tail.HI);
+##          return(meta.cline.func.pScale(pMin,pMax,clineComposite));
+##        },
        parameterTypes=CLINEPARAMETERS[c("center","width","pMin","pMax","deltaM","tauM")]
-       );
+       ));
 class(cline.meta.mtail.scaled.ascending)<-"clineMetaModel";
 class(cline.meta.mtail.scaled.descending)<-"clineMetaModel";
 cline.meta.ltail.scaled.descending =
-  list(req= function(center,width,pMin,pMax,deltaL,tauL)
-       {
+  cline.func.gen(list(req= function(center,width,pMin,pMax,deltaL,tauL)
          return(width>0 & deltaL>=0 &
                 pMin>=0 & pMax<=1 & pMin<pMax & 
-                tauL>=0 & tauL<=1 )
-       },
+                tauL>=0 & tauL<=1 ),
        prior=function(center,width,pMin,pMax,deltaL,tauL){
   return(0); },
-      func=function(center,width,pMin,pMax,deltaL,tauL)
-       {
-         gamma=4/width;
-        # tail.LO=meta.tail.lower(gamma=gamma,d1=deltaL,tau1=tauL);
-         tail.HI=meta.tail.upper(gamma=gamma,d2=deltaL,tau2=tauL);
-         clineComposite=
-           meta.cline.func.upStep(center=center,
-                                    direction=-1,
-                                    gamma=gamma,
-                              #      lowerTail=tail.LO,
-                                    upperTail=tail.HI);
-         return(meta.cline.func.pScale(pMin,pMax,clineComposite));
-       },
+       pExp=cline.exp.scale(cline.exp.stepUp(
+         cline.u.descend,cline.du.descend,
+         quote(deltaL),
+         cline.exp.upper(cline.u.descend,quote(deltaL),quote(tauL)))),
+      ## func=function(center,width,pMin,pMax,deltaL,tauL)
+##        {
+##          gamma=4/width;
+##         # tail.LO=meta.tail.lower(gamma=gamma,d1=deltaL,tau1=tauL);
+##          tail.HI=meta.tail.upper(gamma=gamma,d2=deltaL,tau2=tauL);
+##          clineComposite=
+##            meta.cline.func.upStep(center=center,
+##                                     direction=-1,
+##                                     gamma=gamma,
+##                               #      lowerTail=tail.LO,
+##                                     upperTail=tail.HI);
+##          return(meta.cline.func.pScale(pMin,pMax,clineComposite));
+##        },
        parameterTypes=CLINEPARAMETERS[c("center","width","pMin","pMax","deltaL","tauL")]
-       );
+       ));
 cline.meta.ltail.scaled.ascending =
-  list(req= function(center,width,pMin,pMax,deltaL,tauL)
-       {
+  cline.func.gen(list(req= function(center,width,pMin,pMax,deltaL,tauL)
          return(width>0 & deltaL>=0 &
                 pMin>=0 & pMax<=1 & pMin<pMax & 
-                tauL>=0 & tauL<=1 )
-       },
+                tauL>=0 & tauL<=1 ),
        prior=function(center,width,pMin,pMax,deltaL,tauL){
   return(0); },
-      func=function(center,width,pMin,pMax,deltaL,tauL)
-       {
-         gamma=4/width;
-         tail.LO=meta.tail.lower(gamma=gamma,d1=deltaL,tau1=tauL);
-        # tail.HI=meta.tail.upper(gamma=gamma,d2=deltaL,tau2=tauL);
-         clineComposite=
-           meta.cline.func.lowStep(center=center,
-                                    direction=1,
-                                    gamma=gamma,
-                                    lowerTail=tail.LO);
-         return(meta.cline.func.pScale(pMin,pMax,clineComposite));
-       },
+       pExp=cline.exp.scale(cline.exp.stepLow(
+         cline.u.ascend,cline.du.ascend,
+         quote(deltaL),
+         cline.exp.lower(cline.u.ascend,quote(deltaL),quote(tauL)))),
+##       func=function(center,width,pMin,pMax,deltaL,tauL)
+##        {
+##          gamma=4/width;
+##          tail.LO=meta.tail.lower(gamma=gamma,d1=deltaL,tau1=tauL);
+##         # tail.HI=meta.tail.upper(gamma=gamma,d2=deltaL,tau2=tauL);
+##          clineComposite=
+##            meta.cline.func.lowStep(center=center,
+##                                     direction=1,
+##                                     gamma=gamma,
+##                                     lowerTail=tail.LO);
+##          return(meta.cline.func.pScale(pMin,pMax,clineComposite));
+##        },
        parameterTypes=CLINEPARAMETERS[c("center","width","pMin","pMax","deltaL","tauL")]
-       );
+       ));
 class(cline.meta.ltail.scaled.ascending)<-"clineMetaModel";
 class(cline.meta.ltail.scaled.descending)<-"clineMetaModel";
 cline.meta.rtail.scaled.ascending =
-  list(req= function(center,width,pMin,pMax,deltaR,tauR)
-       {
+  cline.func.gen(list(req= function(center,width,pMin,pMax,deltaR,tauR)
          return(width>0 & deltaR>=0 &
                 pMin>=0 & pMax<=1 & pMin<pMax & 
-                tauR>=0 & tauR<=1 )
-       },
+                tauR>=0 & tauR<=1 ),
        prior=function(center,width,pMin,pMax,deltaR,tauR){
   return(0); },
-      func=function(center,width,pMin,pMax,deltaR,tauR)
-       {
-         gamma=4/width;
-        # tail.LO=meta.tail.lower(gamma=gamma,d1=deltaL,tau1=tauL);
-         tail.HI=meta.tail.upper(gamma=gamma,d2=deltaR,tau2=tauR);
-         clineComposite=
-           meta.cline.func.upStep(center=center,
-                                    direction=1,
-                                    gamma=gamma,
-                              #      lowerTail=tail.LO,
-                                    upperTail=tail.HI);
-         return(meta.cline.func.pScale(pMin,pMax,clineComposite));
-       },
+       pExp=cline.exp.scale(cline.exp.stepUp(
+         cline.u.ascend,cline.du.ascend,
+         quote(deltaR),
+         cline.exp.upper(cline.u.ascend,quote(deltaR),quote(tauR)))),
+##       func=function(center,width,pMin,pMax,deltaR,tauR)
+##        {
+##          gamma=4/width;
+##         # tail.LO=meta.tail.lower(gamma=gamma,d1=deltaL,tau1=tauL);
+##          tail.HI=meta.tail.upper(gamma=gamma,d2=deltaR,tau2=tauR);
+##          clineComposite=
+##            meta.cline.func.upStep(center=center,
+##                                     direction=1,
+##                                     gamma=gamma,
+##                               #      lowerTail=tail.LO,
+##                                     upperTail=tail.HI);
+##          return(meta.cline.func.pScale(pMin,pMax,clineComposite));
+##        },
        parameterTypes=CLINEPARAMETERS[c("center","width","pMin","pMax","deltaR","tauR")]
-       );
+       ));
 cline.meta.rtail.scaled.descending =
-  list(req= function(center,width,pMin,pMax,deltaR,tauR)
-       {
+  cline.func.gen(list(req= function(center,width,pMin,pMax,deltaR,tauR)
          return(width>0 & deltaR>=0 &
                 pMin>=0 & pMax<=1 & pMin<pMax & 
-                tauR>=0 & tauR<=1 )
-       },
+                tauR>=0 & tauR<=1 ),
        prior=function(center,width,pMin,pMax,deltaR,tauR){
   return(0); },
-      func=function(center,width,pMin,pMax,deltaR,tauR)
-       {
-         gamma=4/width;
-         tail.LO=meta.tail.lower(gamma=gamma,d1=deltaR,tau1=tauR);
-        # tail.HI=meta.tail.upper(gamma=gamma,d2=deltaL,tau2=tauL);
-         clineComposite=
-           meta.cline.func.lowStep(center=center,
-                                    direction=-1,
-                                    gamma=gamma,
-                                    lowerTail=tail.LO);
-         return(meta.cline.func.pScale(pMin,pMax,clineComposite));
-       },
+       pExp=cline.exp.scale(cline.exp.stepLow(
+         cline.u.descend,cline.du.descend,
+         quote(deltaR),
+         cline.exp.lower(cline.u.descend,quote(deltaR),quote(tauR)))),
+##       func=function(center,width,pMin,pMax,deltaR,tauR)
+##        {
+##          gamma=4/width;
+##          tail.LO=meta.tail.lower(gamma=gamma,d1=deltaR,tau1=tauR);
+##         # tail.HI=meta.tail.upper(gamma=gamma,d2=deltaL,tau2=tauL);
+##          clineComposite=
+##            meta.cline.func.lowStep(center=center,
+##                                     direction=-1,
+##                                     gamma=gamma,
+##                                     lowerTail=tail.LO);
+##          return(meta.cline.func.pScale(pMin,pMax,clineComposite));
+##        },
        parameterTypes=CLINEPARAMETERS[c("center","width","pMin","pMax","deltaR","tauR")]
-       );
+       ));
 class(cline.meta.rtail.scaled.ascending)<-"clineMetaModel";
 class(cline.meta.rtail.scaled.descending)<-"clineMetaModel";
 

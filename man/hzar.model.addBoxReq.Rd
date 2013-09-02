@@ -5,6 +5,9 @@
 \alias{hzar.model.addMinCenter}
 \alias{hzar.model.addMaxDelta}
 \alias{hzar.model.addMaxWidth}
+\alias{hzar.model.addMaxVariance}
+\alias{hzar.model.addMuRange}
+\alias{hzar.model.addNormalBox}
 %- Also NEED an '\alias' for EACH other topic documented here.
 \title{
   Add parameter restriction clauses to cline model
@@ -13,7 +16,7 @@
 \description{
   The intent of these methods is to assist the optimizer in exploring
   the model parameter space by instructing it to ignore models that are
-  not interesting.  For example, if all of the sampled populations are
+  not interesting.  For example, if all of the sampled localities are
   in a region 100km wide, then a cline width of 110km is probably not
   interesting.  A cline width of 500km in that scenario would definitely
   not be interesting at all.
@@ -25,6 +28,9 @@ hzar.model.addMaxCenter(meta.model, maxValue)
 hzar.model.addMinCenter(meta.model, minValue)
 hzar.model.addMaxDelta(meta.model, maxValue)
 hzar.model.addMaxWidth(meta.model, maxValue)
+hzar.model.addMaxVariance(meta.model, maxValue)
+hzar.model.addNormalBox(meta.model, left, right, bottom,top)
+hzar.model.addMuRange(meta.model, low, high)
 }
 %- maybe also 'usage' for other objects documented here.
 \arguments{
@@ -36,6 +42,18 @@ hzar.model.addMaxWidth(meta.model, maxValue)
   }
   \item{maxValue}{
     The greatest value to consider.
+  }
+  \item{left}{
+    The leftmost location to consider.
+  }
+  \item{right}{
+    The rightmost location to consider.
+  }
+  \item{bottom}{
+    The least trait value to consider.
+  }
+  \item{top}{
+    The greatest trait value to consider.
   }
   The following arguments specifier a range in distances, with ascending
   values from left to right. 

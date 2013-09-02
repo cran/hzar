@@ -5,8 +5,11 @@
   Set the parameters controling the optimizer environment.
 }
 \description{
-  This method assists in assigning appropriate values for controller
-  \code{\link{MCMCmetrop1R}} optimizer. 
+  Defines the general parameters controlling an MCMC process. This
+  includes the burnin, chainLength, diangostic output, and the random
+  number generator seed, as used by the \code{\link{MCMCmetrop1R}} 
+  optimizer. 
+  
 }
 \usage{
 hzar.make.mcmcParam(chainLength, burnin, verbosity, thin,
@@ -16,31 +19,33 @@ hzar.make.mcmcParam(chainLength, burnin, verbosity, thin,
 %- maybe also 'usage' for other objects documented here.
 \arguments{
   \item{chainLength}{
-    How many generations to run the mcmc process after burn-in.
+    Defines how many generations to run the MCMC process after completing burnin. 
   }
   \item{burnin}{
-    How many initial generations are to be considered burn-in and discarded.
+    Defines how many states to generate and discard at the begining of
+    the chain. 
   }
   \item{verbosity}{
     If 0, output nothing while mcmc process is running.
-    If positive, print the model state every verbosity generations after burn-in.
+    If positive, print the model state every \code{verbosity} generations after burn-in.
   }
   \item{thin}{
     Keep only states whose number of generations after burn-in is evenly
     divisible by thin.
   }
   \item{seedStreamChannel}{
-    In the lecuyer random number generator, use channel \code{seedStreamChannel}.
+    Set the channel number used in the lecuyer random number generator.
   }
   \item{useSeedStream}{
-    If TRUE, use the lecuyer random number generator.
-    If FALSE, use the mersenne random number generator.
+    If TRUE, use the lecuyer random number generator in the MCMC process.
+    If FALSE, use the mersenne twister random generator in the MCMC process.
   }
   \item{mersenneSeed}{
-    Seed for the mersenne random number generator.
+    Sets the seed value for mersenne twister.  Expects a numeric of length 1.
   }
   \item{lecuyerSeed}{
-    Seed for the lecuyer random number generator.
+    Sets the seed value for lecuyer random number generator.  Expects a
+    numeric of length 6. 
   }
 }
 % \details{

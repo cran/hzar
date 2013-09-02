@@ -2,37 +2,49 @@
 \alias{hzar.doMolecularData1DPops}
 \alias{hzar.obsData}
 \alias{hzar.doCLTData1DPops}
+\alias{hzar.doNormalData1DPops}
 %- Also NEED an '\alias' for EACH other topic documented here.
 \title{
-  Generate a hzar.obsData object using summary data about each population.
+  Generate a hzar.obsData object using summary data about each locality
 }
 \description{
   Creates a hzar.obsData object using the observations given.  The
   likelihood function used is chosen based on the method called.
 }
 \usage{
-hzar.doMolecularData1DPops(distance, pObs, nSamples)
-hzar.doCLTData1DPops(distance, muObs, varObs, nSamples)
+hzar.doMolecularData1DPops(distance, pObs, nEff,
+                           siteID=paste("P",1:length(distance),sep=""),
+                           ylim=extendrange(c(0,1)))
+hzar.doCLTData1DPops(distance, muObs, varObs, nEff)
+hzar.doNormalData1DPops(distance, muObs, varObs, nEff,
+                        siteID=paste("P",1:length(distance),sep=""),
+                        ylim=NULL)
 }
 %- maybe also 'usage' for other objects documented here.
 \arguments{
   All arguments should be of the same length.
   \item{distance}{
-    The distance of each population. If the same distance is given
-    multiple times, then multiple sites are assumed to be at that
+    The distance of each locality. If the same distance is given
+    multiple times, then multiple localities are assumed to be at that
     distance.
   }
   \item{pObs}{
-    The observed frequency at each site.
+    The observed frequency at each locality.
   }
-  \item{nSamples}{
-    The numbered of samples observed at each site.
+  \item{nEff}{
+    The effective number of samples observed at each locality.
   }
   \item{muObs}{
     The mean trait value observed at each site.
   }
   \item{varObs}{
     The trait variance observed at each site.
+  }
+  \item{ylim}{
+    The ylim to use when plotting the observed data.
+  }
+  \item{siteID}{
+    The identifier to use for each sampling site.
   }
 }
 \details{

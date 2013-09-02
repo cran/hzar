@@ -17,7 +17,7 @@ hzar.doFit <- function(fitRequest){
       MCMCmetrop1R(fun=fitRequest$llFunc, logfun="true", force.samp=TRUE,
                    mcmc=useParam$chainLength, burnin=useParam$burnin,
                    verbose=useParam$verbosity, thin=useParam$thin,
-                   theta.init=mdlParam$init, tune=mdlParam$tune,
+                   theta.init=mdlParam$init, tune=as.numeric(mdlParam$tune),
                    V=fitRequest$cM, seed=useParam$seed,
                    optim.control=list(fnscale=-1,trace=0,REPORT=10,maxit=5000),
                    optim.method="L-BFGS-B",
@@ -97,6 +97,7 @@ hzar.make.clineLLfunc.old.ML <-
     model.req<-param.check.func;
     model.gen<-meta.cline.func;
     eval.clineLL<- model.LL;
+    obsData=as.list(environment(model.LL))$obj;
     myRejectionLL<-LLrejectedModel;
     ## Second, modify function signitures to account for fixed
     ## parameters.
@@ -199,7 +200,7 @@ hzar.eval.clineLL <- function(data, llFunc,doPar=FALSE){
   ## print("A");
   slices<-fitter.wedgeSlice(dim(data)[[1]]);
   ## cat("Eval wedge size:",object.size(slices),"\n");
-  
+  tttIndex=NULL;
   useFunc=llFunc;
   useData=data;
   if(doPar){
@@ -220,6 +221,7 @@ hzar.eval.clineLL <- function(data, llFunc,doPar=FALSE){
 }
            
 fitter.gen.rParam.uniform<-function(param.lower,param.upper,count=1000){
+  low=NULL; high=NULL;
   raw<-foreach(low=param.lower,
                high=param.upper,
                .combine=cbind) %do% {runif(count,low,high)};
@@ -274,16 +276,17 @@ fitter.gen.samples.rect <- function(param.lower, param.upper, pDiv=11){
 
 hzar.cov.rect<-function(clineLLfunc,param.lower,param.upper,pDiv=11,random=0,passCenter=FALSE){
   ## print("A");
-
+  cat("0")
   ## Check to make sure we aren't about to do something stupid.
   ## Yes, that means that models with over ten million parameters
   ## will fail spectacularly. We hope that you would have
   ## considered writing your own software for problems of such
   ## scale.
-  if(random>1e9){
+  if(random>1e5){
     stop("Covariance matrix calculation with random sampling requested with far too many samples.  Stopping.")
   }
   if(random>0){
+    cat("a")
     data.mat<-list(dTheta=prod(abs(as.numeric(param.upper)
                      -as.numeric(param.lower)))
                    / random,
@@ -291,6 +294,7 @@ hzar.cov.rect<-function(clineLLfunc,param.lower,param.upper,pDiv=11,random=0,pas
                      param.upper,
                      random));
   }else{
+    cat("b")
     ## Stupidity check.  See above
     if((pDiv^length(param.lower))>1e6){
       ## This is recoverable by switching to random sampling.
@@ -301,18 +305,34 @@ hzar.cov.rect<-function(clineLLfunc,param.lower,param.upper,pDiv=11,random=0,pas
                            random=1e4,
                            passCenter=passCenter));
     }
+    cat("B")
     data.mat<-fitter.gen.samples.rect(param.lower,param.upper,pDiv);
   }
   param.names<-names(data.mat$data);##print(names(data.mat));
   ## print("A");
   ##data.wt<-fitter.getCovWeights(data.mat$data,clineLLfunc,data.mat$dTheta);
+  cat("c",sprintf("%0.1e",data.mat$dTheta))
   data.wt<-hzar.eval.clineLL(data.mat$data,clineLLfunc);
-  data.mat$data<-data.mat$data[data.wt>-1e6,];
-  data.wt<-data.wt[data.wt>-1e6];
-  MIN.DATA<-(1+length(param.upper))
+  data.mat$data<-data.mat$data[data.wt>-1e7, ,drop=FALSE];
+  data.wt<-data.wt[data.wt>-1e7];
+  cat("d")
+  MIN.DATA<-(1+length(param.upper))*4
   if(length(data.wt)<MIN.DATA){
     ## need more samples... recurse.
-    if(random>0){ 
+    
+    if(length(data.wt)>9){
+      cat("-")
+      param.A <- apply(data.mat$data,2,extendrange)
+      
+      if(!any(param.A[1,]==param.A[2,])){
+        param.lower <- param.A[1,]
+        param.upper <- param.A[2,]
+        random=random/2
+      }
+    }
+    
+    if(random>0){
+      cat("Dr")
       ## Double the amount of sampling
       return(hzar.cov.rect(clineLLfunc,
                            param.lower,
@@ -320,6 +340,7 @@ hzar.cov.rect<-function(clineLLfunc,param.lower,param.upper,pDiv=11,random=0,pas
                            random=2*random,
                            passCenter=passCenter));
     }else{
+      cat("Dp")
       ##Increase the resolution slightly.
       return(hzar.cov.rect(clineLLfunc,
                            param.lower,
@@ -329,30 +350,52 @@ hzar.cov.rect<-function(clineLLfunc,param.lower,param.upper,pDiv=11,random=0,pas
     }
   }
   while(sum(data.wt>-723)<MIN.DATA){
+    cat("+")
     ## insufficient data in finite range
     if(sum(data.wt>609)>0){
       ## scaling won't fix the problem, so more samples needed.
       ## Recurse.
+      
+      if(sum(data.wt>-1000)>9){
+        cat("-")
+        data.mat$data <- data.mat$data[data.wt>-1000, ,drop=FALSE]
+        data.wt <- data.wt[data.wt>-1000]
+      }
+      
+      cat("-")
+      param.A <- apply(data.mat$data,2,extendrange)
+      
+      if(!any(param.A[1,]==param.A[2,])){
+        param.lower <- param.A[1,]
+        param.upper <- param.A[2,]
+      }
       if(random>0){ 
+        cat("Er")
         ## Double the amount of sampling
         return(hzar.cov.rect(clineLLfunc,
                              param.lower,
                              param.upper,
-                             random=2*random,
+                             random=random*2,
                              passCenter=passCenter));
       }else{
+        
+        cat("Ep")
         ##Increase the resolution slightly.
         return(hzar.cov.rect(clineLLfunc,
                              param.lower,
                              param.upper,
-                             pDiv=pDiv+1,
+                             pDiv=pDiv,
                              passCenter=passCenter));
       }
     }
     ## iteratively shift likelihood space to bring samples into finite range.
-    data.wt<-data.wt+100;
+    if(sum(data.wt>-723)==0){
+      data.wt<-data.wt-max(data.wt);
+    }else {data.wt<-data.wt+100}
   }
   ## print("A");
+
+  cat("f")
   VDATA<-cov.wt(x=cbind(data.mat$data,model.LL=data.wt),wt=exp(data.wt))
   ##   *data.mat$dTheta)
   VMATRIX<-VDATA$cov;
@@ -362,9 +405,11 @@ hzar.cov.rect<-function(clineLLfunc,param.lower,param.upper,pDiv=11,random=0,pas
   ## counter.inv2<-counter.inv/sqrt(counter.inv["model.LL","model.LL"]);
   ## mat.scaled<-counter.inv%*%VMATRIX%*%counter.inv;
   mat.scaled<-VMATRIX;
+  
+  cat("g")
   if(passCenter)
-    return(list(cov=mat.scaled[param.names,param.names],center=VDATA$center[param.names]));
-  return(mat.scaled[param.names,param.names]);
+    return(list(cov=mat.scaled[param.names,param.names,drop=FALSE],center=VDATA$center[param.names]));
+  return(mat.scaled[param.names,param.names,drop=FALSE]);
 }
 
 cfg.hzar.default.mcmc <- hzar.make.mcmcParam(chainLength=1e6,
@@ -388,8 +433,10 @@ hzar.cov.mcmc<-function(clineLLfunc,mcmcRaw,pDiv=15,random=1e4,passCenter=FALSE)
 }
 hzar.next.fitRequest <- function(oldFitRequest){
   seedChannel<-1;
+  baseSeed=rep(12345,6)
   if(is.list(oldFitRequest$mcmcParam$seed)){
     seedChannel=oldFitRequest$mcmcParam$seed[[2]];
+    baseSeed=oldFitRequest$mcmcParam$seed[[1]]
   }
   if(identical( attr(oldFitRequest,"fit.run") , TRUE)){
     seedChannel<-seedChannel+1;
@@ -400,24 +447,381 @@ hzar.next.fitRequest <- function(oldFitRequest){
     oldFitRequest$mcmcParam$burnin,
     oldFitRequest$mcmcParam$verbosity,
     oldFitRequest$mcmcParam$thin,
-    seedChannel);
+    seedChannel,lecuyerSeed=baseSeed);
   mdlParam<-oldFitRequest$modelParam;
   covMatrix<-oldFitRequest$cM
   if(identical( attr(oldFitRequest,"fit.success") , TRUE)){
-    mcmcSubset<-oldFitRequest$mcmcRaw[sample(dim(oldFitRequest$mcmcRaw)[[1]]),];
+    nGen <- dim(oldFitRequest$mcmcRaw)[[1]]
+    nSam <- min(nGen,5e3)
+    mcmcSubset<-oldFitRequest$mcmcRaw[sample(nGen),];
     subLL<-hzar.eval.clineLL(mcmcSubset,oldFitRequest$llFunc);
-    covData<-hzar.cov.mcmc(oldFitRequest$llFunc,mcmcSubset[subLL>max(subLL-4),],passCenter=TRUE);
-    covMatrix<-covData$cov;
-    new.center<-covData$center[names(mdlParam$init)];
-    if(oldFitRequest$llFunc(new.center)>1e-6)
-      mdlParam$init <- new.center;
+    covData <- NULL
+    try(covData <- cov.wt(mcmcSubset[subLL>max(subLL-4),]))
+    if(sum(unique(subLL)>max(subLL-4))<0.95*nGen){
+      try({
+        ## if(sum(unique(subLL)>max(subLL-4))>1e3){
+        ##   covData<-hzar.cov.mcmc(oldFitRequest$llFunc,mcmcSubset[subLL>max(subLL-4),],passCenter=TRUE);
+        ## }else {
+        ##   mcmcSubset<-oldFitRequest$mcmcRaw[sample(nGen),];
+        ##   subLL<-hzar.eval.clineLL(mcmcSubset,oldFitRequest$llFunc);
+        if(sum(unique(subLL)>max(subLL-4))>1e3){
+          wt <- subLL[subLL>max(subLL-4),]
+          wt <- exp(wt-max(wt))
+          covData <- cov.wt(mcmcSubset[subLL>max(subLL-4),],wt)
+        }else if(sum(unique(subLL)>max(subLL-4))>1e2){
+          covData<-hzar.cov.mcmc(oldFitRequest$llFunc,mcmcSubset[subLL>max(subLL-4),],passCenter=TRUE);
+        }else if(sum(unique(subLL)>max(subLL-10))>1e2){
+          covData<-hzar.cov.mcmc(oldFitRequest$llFunc,mcmcSubset[subLL>max(subLL-10),],passCenter=TRUE);
+        }else {
+          covData<-hzar.cov.mcmc(oldFitRequest$llFunc,mcmcSubset,passCenter=TRUE);
+        }
+      },silent=TRUE)
+    }
+    if(!is.null(covData)){
+      covMatrix<-covData$cov;
+      new.center<-covData$center[names(mdlParam$init)];
+      if(oldFitRequest$llFunc(new.center)>-1e6)
+        mdlParam$init <- new.center;
+    }
+    if(!is.null(covMatrix)){
+      junk <- covMatrix;
+      covMatrix <- NULL;
+      try(if(all(diag(junk)>0)){
+        chol(junk);
+        covMatrix <- junk;
+      },silent=TRUE)
+    }
+        
+    
+    if(is.null(covMatrix)){
+      try({ junk <-  solve(-naiveHessian(mdlParam$init,oldFitRequest$llFunc));
+            junk <- appHScale(junk,mdlParam$lower, mdlParam$upper);
+            if(all(diag(junk)>0)){
+              chol(junk);
+              covMatrix <- junk;}
+          },silent=TRUE)
+    }
+    if(is.null(covMatrix)){
+      try({
+        junk <- appThetaWalkerR(mdlParam$init,
+                                oldFitRequest$llFunc,
+                                mdlParam$lower, 
+                                mdlParam$upper, random = 1000,
+                                passCenter=TRUE);
+        covMatrix <- junk$cov
+        mdlParam$init  <- junk$center
+        
+      })
+    }
   }
   return(hzar.make.fitRequest(mdlParam,
                               covMatrix,
                               oldFitRequest$llFunc,
                               mcmcParam));
 }
-  
+
+
+
+freqCompileLLF <- function(pObs,nObs,pExp){
+  return(substitute((1-pObs)*log((1-pEst)/(1-pObs))*nObs+pObs*log(pEst/pObs)*nObs,
+                    list(pObs=pObs,nObs=nObs,pEst=pExp)));
+}
+
+freqCompileLLEdge <- function(nObs,pExp){
+  return(substitute(nObs*log(pEst),list(nObs=nObs,pEst=pExp)));
+}
+freqCompilePDF <- function(dist,pExp,target){
+  bquote(.(target) <- .(eval(substitute(substitute(A,list(x=dist)),list(A=pExp)))))
+}
+#s.LIB=list(paren=
+s.exp.LIB<-list()
+s.exp.SYM <- c();
+## sym=list(),use=list(),run=list()
+s.exp.LIB.add <- function(sym,use,run){
+  s.exp.LIB<<-c(s.exp.LIB,list(list(sym=c(sym),use=use,run=run)))
+  s.exp.SYM<<-unique(c(s.exp.SYM,sym))
+}
+
+s.exp2NumArg <- function(x) length(x)==3 && is.numeric(x[[2]]) && is.numeric(x[[3]])
+s.exp1NumArg <- function(x) length(x)==2 && is.numeric(x[[2]])
+s.expNumSimpA <- function(x) length(x)==3 && is.numeric(x[[2]]) && length(x[[2]])==1
+s.expNumSimpB <- function(x) length(x)==3 && is.numeric(x[[3]]) && length(x[[3]])==1
+s.exp1LangArg <- function(x) length(x)==2 && !is.symbol(x[[2]]) && is.language(x[[2]])
+
+s.exp2boolArg <- function(x) length(x)==3 && is.logical(x[[2]]) && is.logical(x[[3]])
+s.exp1boolArg <- function(x) length(x)==2 && is.logical(x[[2]])
+s.expBoolSimpA <- function(x) length(x)==3 && is.logical(x[[2]]) && length(x[[2]])==1
+s.expBoolSimpB <- function(x) length(x)==3 && is.logical(x[[3]]) && length(x[[3]])==1
+
+s.exp.LIB.add(sym=as.name("+"),use=s.exp2NumArg,run=function(x) x[[2]]+x[[3]])
+s.exp.LIB.add(sym=as.name("-"),use=s.exp2NumArg,run=function(x) x[[2]]-x[[3]])
+s.exp.LIB.add(sym=as.name("-"),use=s.exp1NumArg,run=function(x) -x[[2]])
+s.exp.LIB.add(sym=as.name("-"),
+              use=s.exp1LangArg,
+              run=function(x) {
+                if(x[[2]][[1]]==as.name("*")||x[[2]][[1]]==as.name("/")){
+                  if(is.numeric(x[[2]][[2]])) {
+                    x[[2]][[2]]=-x[[2]][[2]];
+                    return(x[[2]])
+                  }
+                  if(is.numeric(x[[2]][[3]])) {
+                    x[[2]][[3]]=-x[[2]][[3]];
+                    return(x[[2]])
+                  }
+                }
+                if(x[[2]][[1]]==as.name("-")){
+                  if(length(x[[2]])==2)
+                    return(x[[2]][[2]])
+                  junk=x[[2]][[3]]
+                  x[[2]][[3]]=x[[2]][[2]]
+                  x[[2]][[2]]=junk
+                  return(x[[2]])
+                }
+                if(x[[2]][[1]]==as.name("(")&&x[[2]][[2]][[1]]==as.name("-")){
+                  if(length(x[[2]][[2]])==2)
+                    return(x[[2]][[2]][[2]])
+                  junk=x[[2]][[2]][[3]]
+                  x[[2]][[2]][[3]]=x[[2]][[2]][[2]]
+                  x[[2]][[2]][[2]]=junk
+                  return(x[[2]][[2]])
+                }
+                x})
+s.exp.LIB.add(sym=as.name("*"),use=s.exp2NumArg,run=function(x) x[[2]]*x[[3]])
+s.exp.LIB.add(sym=as.name("/"),use=s.exp2NumArg,run=function(x) x[[2]]/x[[3]])
+
+s.exp.LIB.add(sym=as.name("+"),use=s.expNumSimpA,run=function(x) {if(x[[2]]==0) return(x[[3]]); x})
+s.exp.LIB.add(sym=as.name("-"),use=s.expNumSimpA,run=function(x) {if(x[[2]]==0) return(c(as.name("-"),x[[3]])); x})
+s.exp.LIB.add(sym=c(as.name("+"),as.name("-")),use=s.expNumSimpB,run=function(x) {if(x[[3]]==0) return(x[[2]]); x})
+
+s.exp.LIB.add(sym=as.name("*"),
+              use=s.expNumSimpA,
+              run=function(x) {
+                if(x[[2]]==0) return(0);
+                if(x[[2]]==1) return(x[[3]]);
+                if(!is.symbol(x[[3]])&&is.language(x[[3]])){
+                  if((x[[3]][[1]]==as.name("*")||x[[3]][[1]]==as.name("/"))
+                     &&is.numeric(x[[3]][[2]])) {
+                    x[[3]][[2]]=x[[2]]*x[[3]][[2]];
+                    return(x[[3]])
+                  }
+                  if(x[[3]][[1]]==as.name("*")&&is.numeric(x[[3]][[3]])) {
+                    x[[3]][[3]]=x[[2]]*x[[3]][[3]];
+                    return(x[[3]])
+                  }
+                }
+                x})
+## s.exp.LIB.add(sym=as.name("*"),use=s.expNumSimpA,run=function(x) {if(x[[2]]==1) return(x[[3]]); x})
+s.exp.LIB.add(sym=as.name("*"),use=s.expNumSimpB,run=function(x) {if(x[[3]]==0) return(0); x})
+s.exp.LIB.add(sym=c(as.name("*"),as.name("/")),
+              use=s.expNumSimpB,
+              run=function(x) {
+                if(x[[3]]==1) return(x[[2]]);
+                if(x[[3]]==-1) return(c(as.name("-"),x[[2]]));
+                x})
+
+s.exp.LIB.add(sym=as.name("!"),use=s.exp1boolArg,run=function(x) !x[[2]])
+s.exp.LIB.add(sym=as.name("|"),use=s.exp2boolArg,run=function(x) x[[2]]|x[[3]])
+s.exp.LIB.add(sym=as.name("&"),use=s.exp2boolArg,run=function(x) x[[2]]&x[[3]])
+s.exp.LIB.add(sym=c(as.name("&&"),as.name("&")),use=s.expBoolSimpA,run=function(x) {if(x[[2]])return(x[[3]]);FALSE})
+s.exp.LIB.add(sym=c(as.name("||"),as.name("|")),use=s.expBoolSimpA,run=function(x) {if(!x[[2]])return(x[[3]]);TRUE})
+s.exp.LIB.add(sym=c(as.name("&&"),as.name("&")),use=s.expBoolSimpB,run=function(x) {if(x[[3]])return(x[[2]]);FALSE})
+s.exp.LIB.add(sym=c(as.name("||"),as.name("|")),use=s.expBoolSimpB,run=function(x) {if(!x[[3]])return(x[[2]]);TRUE})
+s.exp.LIB.add(sym=as.name("<"),use=s.exp2NumArg,run=function(x) x[[2]]<x[[3]])
+s.exp.LIB.add(sym=as.name(">"),use=s.exp2NumArg,run=function(x) x[[2]]>x[[3]])
+s.exp.LIB.add(sym=as.name(">="),use=s.exp2NumArg,run=function(x) x[[2]]>=x[[3]])
+s.exp.LIB.add(sym=as.name("<="),use=s.exp2NumArg,run=function(x) x[[2]]<=x[[3]])
+s.exp.LIB.add(sym=as.name("=="),use=s.exp2NumArg,run=function(x) x[[2]]==x[[3]])
+s.exp.LIB.add(sym=as.name("!="),use=s.exp2NumArg,run=function(x) x[[2]]!=x[[3]])
+
+
+s.exp.LIB.add(
+  sym=as.name("("),
+  use=function(x) length(x)==2 && x[[1]]==as.name("(") && (is.symbol(x[[2]]) || !is.language(x[[2]])),
+  run=function(x) x[[2]])
+
+
+simplify.exp <- function(expL){
+  ##cat("l")
+  if(is.symbol(expL)||is.numeric(expL)||is.logical(expL))return(expL)
+  ##cat("L")
+  proposed <- lapply(expL,simplify.exp)
+  ##cat("\ns")
+  if(is.symbol(proposed[[1]])&&all(proposed[1]%in% s.exp.SYM )){
+    for(iter in 1:length(s.exp.LIB)){
+      
+      ##cat("_")
+      layer=s.exp.LIB[[iter]]
+      
+      if(is.symbol(proposed[[1]])&&all(proposed[1]%in% layer$sym) && layer$use(proposed)){
+        ##cat("+")
+        ##str(proposed)
+        proposed <- layer$run(proposed)
+      }
+      if(is.symbol(proposed))return(proposed)
+      if(is.language(proposed))proposed <- as.list(proposed)
+      if(!is.list(proposed))return(proposed)
+    }
+  }
+  return(as.call(proposed))
+}
+
+#s.LIB=list(paren=
+rA.exp.LIB<-list()
+rA.exp.SYM <- c();
+## sym=list(),use=list(),run=list()
+rA.exp.LIB.add <- function(sym,use,run){
+  rA.exp.LIB<<-c(rA.exp.LIB,list(list(sym=c(sym),use=use,run=run)))
+  rA.exp.SYM<<-unique(c(rA.exp.SYM,sym))
+}
+
+rA.exp2Arg <- function(x) length(x)==3
+rA.exp.LIB.add(sym=c(as.name(">"),as.name(">=")),
+               use=rA.exp2Arg,
+               run=function(x) bquote(ifelse(
+                 .(x[[2]]) %lt% .(x[[3]]),
+                 .(x[[2]]) -.(x[[3]])-1e6,
+                 0)))
+rA.exp.LIB.add(sym=c(as.name("<"),as.name("<=")),
+               use=rA.exp2Arg,
+               run=function(x) bquote(ifelse(
+                 .(x[[2]]) %gt% .(x[[3]]),
+                 .(x[[3]])-1e6 -.(x[[2]]),
+                 0)))
+rA.exp.LIB.add(sym=as.name("|"),use=rA.exp2Arg,run=function(x) bquote (.(x[[2]])*.(x[[3]])))
+rA.exp.LIB.add(sym=as.name("&"),use=rA.exp2Arg,run=function(x) bquote (.(x[[2]])+.(x[[3]])))
+
+#s.LIB=list(paren=
+rB.exp.LIB<-list()
+rB.exp.SYM <- c();
+## sym=list(),use=list(),run=list()
+rB.exp.LIB.add <- function(sym,use,run){
+  rB.exp.LIB<<-c(rB.exp.LIB,list(list(sym=c(sym),use=use,run=run)))
+  rB.exp.SYM<<-unique(c(rB.exp.SYM,sym))
+}
+
+rB.exp2Arg <- function(x) length(x)==3
+rB.exp.LIB.add(sym=as.name("%gt%"),
+               use=rB.exp2Arg,
+               run=function(x) bquote(.(x[[2]]) > .(x[[3]]) ))
+
+rB.exp.LIB.add(sym=as.name("%lt%"),
+               use=rB.exp2Arg,
+               run=function(x) bquote(.(x[[2]]) < .(x[[3]]) ))
+               
+
+req.Expand.exp <- function(expL){
+  if(is.symbol(expL)||is.numeric(expL)||is.logical(expL))return(expL)
+  proposed <- lapply(expL,req.Expand.exp)
+  if(is.symbol(proposed[[1]])&&all(proposed[1]%in% rA.exp.SYM )){
+    for(iter in 1:length(rA.exp.LIB)){
+      layer=rA.exp.LIB[[iter]]
+      
+      if(is.symbol(proposed[[1]])&&all(proposed[1]%in% layer$sym) && layer$use(proposed)){
+        ##cat("+")
+        ##str(proposed)
+        proposed <- layer$run(proposed)
+      }
+      if(is.symbol(proposed))return(proposed)
+      if(is.language(proposed))proposed <- as.list(proposed)
+      if(!is.list(proposed))return(proposed)
+    }
+  }
+  return(as.call(proposed))
+}
+
+req.Collapse.exp <- function(expL){
+  if(is.symbol(expL)||is.numeric(expL)||is.logical(expL))return(expL)
+  proposed <- lapply(expL,req.Collapse.exp)
+  if(is.symbol(proposed[[1]])&&all(proposed[1]%in% rB.exp.SYM )){
+    for(iter in 1:length(rB.exp.LIB)){
+      layer=rB.exp.LIB[[iter]]
+      
+      if(is.symbol(proposed[[1]])&&all(proposed[1]%in% layer$sym) && layer$use(proposed)){
+        ##cat("+")
+        ##str(proposed)
+        proposed <- layer$run(proposed)
+      }
+      if(is.symbol(proposed))return(proposed)
+      if(is.language(proposed))proposed <- as.list(proposed)
+      if(!is.list(proposed))return(proposed)
+    }
+  }
+  return(as.call(proposed))
+}
+
+req.edge.exp <- function(expL) simplify.exp(req.Collapse.exp(req.Expand.exp(expL)))
+
+
+
+freq.LLfunc <- function(obsData, model,tInit,tFixed,
+                        LLrejectedModel = -1e+08){
+    baseFunc <- function(theta) 0;
+    model.req=model$req;
+    model.gen=model$func
+    model.obsData=obsData
+    param.fixed=tFixed
+    frame=obsData$frame
+    frameA=subset(frame,frame$obsFreq == 0)
+    frameB=subset(frame,frame$obsFreq == 1)
+    pExp=model$pExp
+    pExp <- ll.compile.theta(tInit,tFixed,pExp)
+    ## print(pExp)
+    gLLc<-list()
+    pDF <- list()
+    frame=subset(frame,frame$obsFreq !=0 & frame$obsFreq != 1)
+    new.formals=c(formals(model.req)[names(tInit)],tFixed)
+    ## new.formals=tInit
+    if(nrow(frame) > 1){
+      pDF <- c(pDF,freqCompilePDF(quote(frame$dist), pExp,quote(pFunc)))
+      gLLc <- c(gLLc,freqCompileLLF(quote(frame$obsFreq),quote(frame$n), quote(pFunc)))
+    }else if(nrow(frame) == 1){
+      pDF <- c(pDF,freqCompilePDF(frame$dist, pExp,quote(pFunc)))
+      gLLc <- c(gLLc,freqCompileLLF(frame$obsFreq,frame$n, quote(pFunc)))
+    }
+    if(nrow(frameA)>1){
+      qExp=bquote(1-.(pExp))
+      pDF <- c(pDF,freqCompilePDF(quote(frameA$dist), qExp,quote(qEdge)))
+      gLLc <- c(gLLc,freqCompileLLEdge(quote(frameA$n), quote(qEdge)))
+    }else if(nrow(frameA)==1){
+      qExp=bquote(1-.(pExp))
+      pDF <- c(pDF,freqCompilePDF(frameA$dist, qExp,quote(qEdge)))
+      gLLc <- c(gLLc,freqCompileLLEdge(frameA$n, quote(qEdge)))
+    }
+    if(nrow(frameB)>1){
+      pDF <- c(pDF,freqCompilePDF(quote(frameB$dist), pExp,quote(pEdge)))
+      gLLc <- c(gLLc,freqCompileLLEdge(quote(frameB$n), quote(pEdge)))
+    }else if(nrow(frameB)==1){
+      pDF <- c(pDF,freqCompilePDF(frameB$dist, pExp,quote(pEdge)))
+      gLLc <- c(gLLc,freqCompileLLEdge(frameB$n, quote(pEdge)))
+    }
+    ## print(pDF)
+    ## print(gLLc)
+    if(length(gLLc)==0) stop("No observed data?")
+    gLL <- as.call(c(quote(sum),gLLc))
+    ## print(gLL)
+    reqL <- ll.compile.theta(tInit,tFixed,body(model$req)[[2]])
+    LLrejectedModel <- bquote(.(LLrejectedModel)+.(req.edge.exp(reqL)))
+    gLL <-  step1VectorExpF(reqL,
+                            gLL,
+                            LLrejectedModel)
+    ## print(gLL)
+    ## gLL <- eval(substitute(substitute(LLfunc,tF),list(LLfunc=gLL,tF=tFixed)))
+    ##print(gLL)
+    body(baseFunc) <-simplify.exp(as.call(c(as.name("{"),
+                               pDF,
+                               bquote(res <- .(gLL)),
+                               expression(if(any(is.na(res))) print(theta)),
+                               bquote(ifelse(is.na(res),.(LLrejectedModel),res)))));
+    llFunc=baseFunc
+    old.formals=formals(model.req)
+    formals(model.req) <- c(old.formals[names(tInit)],tFixed)
+    formals(model.gen) <- c(old.formals[names(tInit)],tFixed)
+    ## eval(substitute(substitute(LLfunc,eL),
+    ##                                 list(LLfunc=gLL,eL=tMap)))
+    ## body(baseFunc) <- substitute(evalq(LLfunc,envir=theta),list(LLfunc=gLL))
+    ## environment(baseFunc) <- .GlobalEnv 
+    baseFunc
+}
 hzar.first.fitRequest.old.ML <-function(model,obsData,verbose=TRUE){
   
   if(verbose){
@@ -429,11 +833,12 @@ hzar.first.fitRequest.old.ML <-function(model,obsData,verbose=TRUE){
   
   modelParam<-splitParameters(model$parameterTypes);
    ## print("A");
-  clineLLfunc<-hzar.make.clineLLfunc.old.ML(names(modelParam$init),
-                                            modelParam$fixed,
-                                            model$req,
-                                            model$func,
-                                            obsData$model.LL);
+  clineLLfunc <- freq.LLfunc(obsData,model,modelParam$init,modelParam$fixed)
+  ## clineLLfunc<-hzar.make.clineLLfunc.old.ML(names(modelParam$init),
+##                                             modelParam$fixed,
+##                                             model$req,
+##                                             model$func,
+##                                             obsData$model.LL);
    ## print("A");
   covMatrix<-NULL;
   try(  covMatrix<-hzar.cov.rect(clineLLfunc,modelParam$lower,modelParam$upper,random=1e4));
